@@ -1,5 +1,5 @@
 const BUILD_TAG = "tp-4186";
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { Routes, Route } from 'react-router-dom';
 import axios from 'axios';
 import './App.css';
@@ -7,15 +7,29 @@ import Layout from './components/Layout';
 import Home from './pages/Home';
 import Play from './pages/Play';
 import Result from './pages/Result';
+import History from './pages/History';
 import QuestionBank from './pages/QuestionBank';
 import QuestionDetail from './pages/QuestionDetail';
 import NotFound from './pages/NotFound';
+
+const HISTORY_KEY = 'ltw_trieuphu_history';
+
+const loadHistory = () => {
+  try {
+    const raw = localStorage.getItem(HISTORY_KEY);
+    const parsed = raw ? JSON.parse(raw) : [];
+    return Array.isArray(parsed) ? parsed : [];
+  } catch (err) {
+    return [];
+  }
+};
 
 const App = () => {
   const [questions, setQuestions] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
   const [playerName, setPlayerName] = useState('');
+  const [history, setHistory] = useState(loadHistory);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -42,6 +56,22 @@ const App = () => {
     return () => controller.abort();
   }, []);
 
+  useEffect(() => {
+    try {
+      localStorage.setItem(HISTORY_KEY, JSON.stringify(history));
+    } catch (err) {
+      return;
+    }
+  }, [history]);
+
+  const addRecord = useCallback((record) => {
+    setHistory((prev) => [...prev, record]);
+  }, []);
+
+  const clearHistory = () => {
+    setHistory([]);
+  };
+
   return (
     <Routes>
       <Route
@@ -54,16 +84,25 @@ const App = () => {
             <Home
               playerName={playerName}
               setPlayerName={setPlayerName}
-              history={[]}
+              history={history}
             />
           }
         />
         <Route
           path="play"
-          element={<Play questions={questions} playerName={playerName} />}
+          element={
+            <Play
+              questions={questions}
+              playerName={playerName}
+              addRecord={addRecord}
+            />
+          }
         />
         <Route path="result" element={<Result />} />
-        <Route path="history" element={<h2>Lịch sử</h2>} />
+        <Route
+          path="history"
+          element={<History history={history} clearHistory={clearHistory} />}
+        />
         <Route path="questions" element={<QuestionBank questions={questions} />} />
         <Route
           path="questions/:id"
