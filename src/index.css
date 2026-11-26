@@ -8,6 +8,16 @@ body {
   padding: 16px;
 }
 
+.app.light {
+  background: #ffffff;
+  color: #18212c;
+}
+
+.app.dark {
+  background: #1f2430;
+  color: #e8eaf0;
+}
+
 table {
   border-collapse: collapse;
   margin-bottom: 8px;
@@ -26,4 +36,15 @@ td {
 
 .error {
   color: #c62828;
+}
+
+.notice {
+  position: fixed;
+  top: 8px;
+  right: 8px;
+  z-index: 10;
+  padding: 8px 16px;
+  background: #2e7d32;
+  color: #ffffff;
+  border-radius: 4px;
 }
