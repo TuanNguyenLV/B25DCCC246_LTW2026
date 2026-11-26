@@ -1,20 +1,18 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useDispatch, useSelector } from 'react-redux';
 import useFetch from './hooks/useFetch';
+import useDebounce from './hooks/useDebounce';
+import useLocalStorage from './hooks/useLocalStorage';
 import { useTheme } from './context/ThemeContext';
 import { useNotice } from './context/NoticeContext';
 import { selectMatches, setMatches, removeMatch, setGoals } from './features/matchesSlice';
+import { hasSaved } from './store';
 import StandingsTable from './components/StandingsTable';
 import AddMatchForm from './components/AddMatchForm';
 import GoalPlanner from './components/GoalPlanner';
+import MatchRow from './components/MatchRow';
 import { ROUNDS, RESULT_LABELS } from './data';
-import {
-  getTeamName,
-  getResult,
-  isValidGoals,
-  calcStandings,
-  calcMatchStats,
-} from './utils';
+import { getTeamName, calcStandings, calcMatchStats } from './utils';
 
 const BUILD_TAG = "bd-5918";
 
@@ -24,15 +22,44 @@ const App = () => {
   const { data, loading, error } = useFetch('/data/matches.json');
   const { theme, toggleTheme } = useTheme();
   const showNotice = useNotice();
-  const [roundFilter, setRoundFilter] = useState('all');
+  const [roundFilter, setRoundFilter] = useLocalStorage('ltw_bongda_round', 'all');
+  const [search, setSearch] = useState('');
+  const debouncedSearch = useDebounce(search, 300);
+  const searchRef = useRef(null);
 
   useEffect(() => {
-    if (data) dispatch(setMatches(data));
+    if (data && !hasSaved) dispatch(setMatches(data));
   }, [data, dispatch]);
+
+  useEffect(() => {
+    const handleKey = (e) => {
+      if (e.key === '/') {
+        const tag = e.target.tagName;
+        if (
+          tag === 'INPUT' ||
+          tag === 'SELECT' ||
+          tag === 'TEXTAREA' ||
+          e.target.isContentEditable
+        ) {
+          return;
+        }
+        if (searchRef.current) {
+          e.preventDefault();
+          searchRef.current.focus();
+        }
+      } else if (e.key === 'Escape') {
+        if (searchRef.current && document.activeElement === searchRef.current) {
+          setSearch('');
+        }
+      }
+    };
+    window.addEventListener('keydown', handleKey);
+    return () => window.removeEventListener('keydown', handleKey);
+  }, []);
 
   const standings = useMemo(() => calcStandings(matches), [matches]);
 
-  const visible = useMemo(
+  const filtered = useMemo(
     () =>
       roundFilter === 'all'
         ? matches
@@ -40,19 +67,55 @@ const App = () => {
     [matches, roundFilter]
   );
 
-  const stats = useMemo(() => calcMatchStats(visible), [visible]);
+  const visible = useMemo(() => {
+    const q = debouncedSearch.toLowerCase();
+    return filtered.filter(
+      (m) =>
+        getTeamName(m.home).toLowerCase().includes(q) ||
+        getTeamName(m.away).toLowerCase().includes(q)
+    );
+  }, [filtered, debouncedSearch]);
+
+  const stats = useMemo(() => calcMatchStats(filtered), [filtered]);
 
   const leader = standings[0];
 
-  const handleRemove = (m) => {
-    dispatch(removeMatch(m.id));
-    showNotice(`Đã xóa trận ${getTeamName(m.home)} - ${getTeamName(m.away)}`);
+  useEffect(() => {
+    document.title =
+      matches.length > 0
+        ? `${leader.name} dẫn đầu – Giải bóng đá khoa`
+        : 'Giải bóng đá khoa';
+  }, [matches.length, leader]);
+
+  const handleTeamShift = (e) => {
+    setSearch(e.target.value);
   };
 
+  const handleGoals = useCallback(
+    (id, homeGoals, awayGoals) => {
+      dispatch(setGoals({ id, homeGoals, awayGoals }));
+    },
+    [dispatch]
+  );
+
+  const handleRemove = useCallback(
+    (m) => {
+      dispatch(removeMatch(m.id));
+      showNotice(`Đã xóa trận ${getTeamName(m.home)} - ${getTeamName(m.away)}`);
+    },
+    [dispatch, showNotice]
+  );
+
+  const handleReset = useCallback(() => {
+    if (!data) return;
+    dispatch(setMatches(data));
+    showNotice('Đã đặt lại dữ liệu mẫu');
+  }, [data, dispatch, showNotice]);
+
   let body;
-  if (loading) {
+  if (!hasSaved && loading) {
     body = <p>Đang tải lịch thi đấu...</p>;
-  } else if (error) {
+  } else if (!hasSaved && error) {
     body = <p>Không tải được lịch thi đấu.</p>;
   } else {
     body = (
@@ -72,6 +135,23 @@ const App = () => {
               ? 'Đội dẫn đầu: —'
               : `Đội dẫn đầu: ${leader.name} (${leader.points} điểm)`}
           </p>
+          <h3>Phân bố kết quả</h3>
+          <ul>
+            {Object.entries(RESULT_LABELS).map(([key, label]) => (
+              <li key={key}>
+                {`${label}: ${stats.counts[key]}`}
+                <span
+                  style={{
+                    display: 'inline-block',
+                    marginLeft: 8,
+                    height: 10,
+                    width: `${24 * stats.counts[key]}px`,
+                    background: '#1976d2',
+                  }}
+                />
+              </li>
+            ))}
+          </ul>
         </section>
 
         <section>
@@ -89,6 +169,17 @@ const App = () => {
               ))}
             </select>
           </div>
+          <div className="field">
+            <label htmlFor="search">Tìm đội</label>
+            <input
+              id="search"
+              type="text"
+              ref={searchRef}
+              value={search}
+              onChange={handleTeamShift}
+            />
+          </div>
+          <p>{`Tìm thấy ${visible.length} trận`}</p>
           {visible.length === 0 ? (
             <p>Chưa có trận đấu nào</p>
           ) : (
@@ -101,67 +192,25 @@ const App = () => {
                   <th>BT khách</th>
                   <th>Đội khách</th>
                   <th>Kết quả</th>
+                  <th>Số lần render</th>
                   <th>Xóa</th>
                 </tr>
               </thead>
               <tbody>
                 {visible.map((m) => (
-                  <tr
+                  <MatchRow
                     key={m.id}
-                    style={
-                      getResult(m) === 'draw'
-                        ? { background: 'rgba(255, 193, 7, 0.25)' }
-                        : undefined
-                    }
-                  >
-                    <td>{m.round}</td>
-                    <td>{getTeamName(m.home)}</td>
-                    <td>
-                      <input
-                        type="number"
-                        min="0"
-                        max="20"
-                        value={m.homeGoals}
-                        aria-label={`Bàn thắng nhà ${getTeamName(m.home)} - ${getTeamName(m.away)}`}
-                        onChange={(e) => {
-                          const v = e.target.valueAsNumber;
-                          if (isValidGoals(v)) {
-                            dispatch(
-                              setGoals({ id: m.id, homeGoals: v, awayGoals: m.awayGoals })
-                            );
-                          }
-                        }}
-                      />
-                    </td>
-                    <td>
-                      <input
-                        type="number"
-                        min="0"
-                        max="20"
-                        value={m.awayGoals}
-                        aria-label={`Bàn thắng khách ${getTeamName(m.home)} - ${getTeamName(m.away)}`}
-                        onChange={(e) => {
-                          const v = e.target.valueAsNumber;
-                          if (isValidGoals(v)) {
-                            dispatch(
-                              setGoals({ id: m.id, homeGoals: m.homeGoals, awayGoals: v })
-                            );
-                          }
-                        }}
-                      />
-                    </td>
-                    <td>{getTeamName(m.away)}</td>
-                    <td>{RESULT_LABELS[getResult(m)]}</td>
-                    <td>
-                      <button type="button" onClick={() => handleRemove(m)}>
-                        Xóa
-                      </button>
-                    </td>
-                  </tr>
+                    match={m}
+                    onGoals={handleGoals}
+                    onRemove={handleRemove}
+                  />
                 ))}
               </tbody>
             </table>
           )}
+          <button type="button" onClick={handleReset}>
+            Đặt lại dữ liệu mẫu
+          </button>
         </section>
 
         <section>
